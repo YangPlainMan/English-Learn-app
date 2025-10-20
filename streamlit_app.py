@@ -1,53 +1,78 @@
 import streamlit as st
-from openai import OpenAI
+import openai
 
-# Show title and description.
-st.title("📄 Document question answering")
-st.write(
-    "Upload a document below and ask a question about it – GPT will answer! "
-    "To use this app, you need to provide an OpenAI API key, which you can get [here](https://platform.openai.com/account/api-keys). "
-)
+# ------------------ 配置 ------------------
+# 将你的 OpenAI API Key 放在 Streamlit Secrets 中更安全
+# 或者直接在本地测试时使用 openai.api_key = "YOUR_API_KEY"
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-# Ask user for their OpenAI API key via `st.text_input`.
-# Alternatively, you can store the API key in `./.streamlit/secrets.toml` and access it
-# via `st.secrets`, see https://docs.streamlit.io/develop/concepts/connections/secrets-management
-openai_api_key = st.text_input("OpenAI API Key", type="password")
-if not openai_api_key:
-    st.info("Please add your OpenAI API key to continue.", icon="🗝️")
-else:
+# 测试输出（不会显示密钥，只显示前几位）
+# st.write("✅ Secrets 已加载，当前 API Key 前缀：", openai.api_key[:8])
 
-    # Create an OpenAI client.
-    client = OpenAI(api_key=openai_api_key)
+# ------------------ 页面标题 ------------------
+st.set_page_config(page_title="📖 英语阅读理解伴读助手", layout="wide")
+st.title("📖 英语阅读理解伴读助手")
 
-    # Let the user upload a file via `st.file_uploader`.
-    uploaded_file = st.file_uploader(
-        "Upload a document (.txt or .md)", type=("txt", "md")
-    )
+# ------------------ 输入章节文本 ------------------
+text = st.text_area("📋 复制或粘贴英文书本章节/段落", height=200)
 
-    # Ask the user for a question via `st.text_area`.
-    question = st.text_area(
-        "Now ask a question about the document!",
-        placeholder="Can you give me a short summary?",
-        disabled=not uploaded_file,
-    )
+# ------------------ 生成理解问题 ------------------
+if st.button("📝 生成理解问题"):
+    if not text.strip():
+        st.warning("请先粘贴章节文本！")
+    else:
+        with st.spinner("生成问题中..."):
+            prompt = f"""Read the following English text and generate 5 comprehension questions in English.
+Text:
+{text}"""
+            response = openai.ChatCompletion.create(
+                model="gpt-5-turbo",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            questions = response.choices[0].message.content
+            st.session_state.questions = questions
+            st.subheader("❓ 理解问题：")
+            st.text_area("Questions:", value=questions, height=150)
 
-    if uploaded_file and question:
+# ------------------ 用户答题 ------------------
+if "questions" in st.session_state:
+    st.subheader("✏️ 输入你的答案")
+    answer = st.text_area("Write your answers here:", height=150)
+    
+    if st.button("✅ 检查理解"):
+        if not answer.strip():
+            st.warning("请先输入答案！")
+        else:
+            with st.spinner("AI 评估中..."):
+                eval_prompt = f"""
+Text:
+{text}
 
-        # Process the uploaded file and question.
-        document = uploaded_file.read().decode()
-        messages = [
-            {
-                "role": "user",
-                "content": f"Here's a document: {document} \n\n---\n\n {question}",
-            }
-        ]
+Questions:
+{st.session_state.questions}
 
-        # Generate an answer using the OpenAI API.
-        stream = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=messages,
-            stream=True,
-        )
+User's answers:
+{answer}
 
-        # Stream the response to the app using `st.write_stream`.
-        st.write_stream(stream)
+Evaluate the answers in terms of comprehension.
+Provide feedback and a score out of 10.
+"""
+                eval_response = openai.ChatCompletion.create(
+                    model="gpt-5-turbo",
+                    messages=[{"role": "user", "content": eval_prompt}]
+                )
+                st.subheader("📊 AI 反馈与评分")
+                st.write(eval_response.choices[0].message.content)
+
+# ------------------ 保存答题记录（可选） ------------------
+st.subheader("💾 保存记录（可选）")
+if st.button("保存到本地文本文件"):
+    if "questions" in st.session_state and answer.strip():
+        with open("reading_record.txt", "a", encoding="utf-8") as f:
+            f.write("\n\n=== 新章节 ===\n")
+            f.write(text + "\n")
+            f.write(st.session_state.questions + "\n")
+            f.write("User Answer:\n" + answer + "\n")
+        st.success("保存成功 ✅")
+    else:
+        st.warning("请先生成问题并填写答案！")
